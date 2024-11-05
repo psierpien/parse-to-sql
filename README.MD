@@ -1,16 +1,41 @@
 # MongoDB to SQL Query Translator
 
-This is a simple Node.js application that translates MongoDB queries to SQL. It provides a way to convert MongoDB-style queries into equivalent SQL statements
+This is a simple Node.js application that translates MongoDB style queries into SQL queries. Supports only `find()` method and provides simulated mongodb DB implementation.
+
+#### Supported methods
+
+- `find`
+
+#### Supports operators
+
+- `$and`
+- `$or`
+- `$gt`
+- `$gte`
+- `$lt`
+- `$lte`
+- `$ne`
+- `$in`
+- `$nin`
 
 ## Examples
 
+Simple query with out providing types
+
 ```
-parseToSql(db.user.find({_id: 23113}));
+parseToSql(db.collection('user').find({_id: 23113}));
 // SELECT * FROM user WHERE _id = 23113;
 ```
 
+Example when you wanna provide types for query collection
+
 ```
-parseToSql(db.user.find({ name: "Test", age: { $gte: 18 } }, { name: 1, age: 1 }));
+interface User {
+  name: string;
+  age: number;
+}
+
+parseToSql(db.collection<User>('user').find({ name: "Test", age: { $gte: 18 } }, { name: 1, age: 1 }));
 // SELECT name, age FROM user WHERE name = 'Test' AND age >= 18
 ```
 

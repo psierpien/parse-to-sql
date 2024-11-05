@@ -1,69 +1,15 @@
-export { parseToSql, Db };
+import { Operators, Filter, Projection } from "./mongoMock";
 
-type MongoOperator = "$gt" | "$gte" | "$lt" | "$lte" | "$ne" | "$in" | "$nin";
+export { parseToSql };
 
-type Condition<T> = {
-  [K in keyof T]?: T[K] | { [operator in MongoOperator]?: T[K] | T[K][] };
-};
-
-interface MongoQuery<T> {
-  [key: string]: any | Condition<T>;
-}
-
-type Projection<T> = Partial<Record<keyof T, 1 | 0>>;
-
-interface ICollection<T> {
-  find(query: MongoQuery<T>, projection?: Projection<T>): this;
-  getQueryDetails(): { query: MongoQuery<T>; projection: Projection<T> };
-}
-
-interface IDb {
-  [collectionName: string]: ICollection<{ name: string; age: number }>;
-}
-
-class Collection<T> implements ICollection<T> {
+interface ParseToSqlParams<T> {
   name: string;
-  query: MongoQuery<T> | null = null;
-  projection: Projection<T> | null = null;
-
-  constructor(name: string) {
-    this.name = name;
-  }
-
-  find(query: MongoQuery<T>, projection: Projection<T> = {}): this {
-    this.query = query;
-    this.projection = projection;
-    return this;
-  }
-
-  getQueryDetails() {
-    return {
-      query: this.query as MongoQuery<T>,
-      projection: this.projection as Projection<T>,
-    };
-  }
+  query: Filter<T>;
+  projection?: Projection<T>;
 }
 
-class Db<T> implements IDb {
-  [collectionName: string]: ICollection<T>;
-
-  constructor() {
-    return new Proxy(this, {
-      get: (target, collectionName: string) => {
-        if (!target[collectionName]) {
-          target[collectionName] = new Collection<T>(collectionName);
-        }
-        return target[collectionName];
-      },
-    });
-  }
-}
-
-function parseToSql<T>(collectionInstance: ICollection<T>): string {
-  const { query, projection } = collectionInstance.getQueryDetails();
-  const tableName = (collectionInstance as Collection<T>).name;
-
-  let sqlQuery = `SELECT ${castProjection(projection)} FROM ${tableName}`;
+function parseToSql<T>({ name, query, projection }: ParseToSqlParams<T>) {
+  let sqlQuery = `SELECT ${castProjection(projection)} FROM ${name}`;
 
   if (query && Object.keys(query).length > 0) {
     const conditions = castConditions(query);
@@ -73,7 +19,7 @@ function parseToSql<T>(collectionInstance: ICollection<T>): string {
   return sqlQuery;
 }
 
-function castProjection<T>(projection: Projection<T>) {
+function castProjection<T>(projection?: Projection<T>) {
   if (!projection) {
     return "*";
   }
@@ -85,12 +31,12 @@ function castProjection<T>(projection: Projection<T>) {
   return columns.length > 0 ? columns.join(", ") : "*";
 }
 
-function castConditions<T>(query: MongoQuery<T>): string[] {
+function castConditions<T>(query: Filter<T>): string[] {
   return Object.entries(query).map(([field, condition]) => {
     if (typeof condition === "object") {
       if (Array.isArray(condition)) {
         const conditions = condition.map((value) =>
-          castConditions(value as MongoQuery<T>)
+          castConditions(value as Filter<T>)
         );
 
         switch (field) {
@@ -104,24 +50,22 @@ function castConditions<T>(query: MongoQuery<T>): string[] {
             throw new Error(`Unsupported operator: ${field}`);
         }
       } else {
-        return Object.entries(condition)
+        return `${Object.entries(condition)
           .map(([op, value]) =>
-            translateCondition(field, op as MongoOperator, value)
+            translateCondition(field, op as Operators, value)
           )
-          .join(" AND ");
+          .join(" AND ")}`;
       }
-    } else {
-      return `${field} = ${valueParser(condition)}`;
     }
+
+    return translateCondition(field, "$eq", condition);
   });
 }
 
-function translateCondition(
-  field: string,
-  operator: MongoOperator,
-  value: any
-): string {
+function translateCondition(field: string, operator: Operators, value: any) {
   switch (operator) {
+    case "$eq":
+      return `${field} = ${valueParser(value)}`;
     case "$gt":
       return `${field} > ${valueParser(value)}`;
     case "$gte":
@@ -131,7 +75,7 @@ function translateCondition(
     case "$lte":
       return `${field} <= ${valueParser(value)}`;
     case "$ne":
-      return `${field} != ${valueParser(value)}`;
+      return `${field} <> ${valueParser(value)}`;
     case "$in":
       return `${field} IN (${(value as any[])
         .map((v) => valueParser(v))
@@ -140,21 +84,22 @@ function translateCondition(
       return `${field} NOT IN (${(value as any[])
         .map((v) => valueParser(v))
         .join(", ")})`;
+
     default:
       throw new Error(`Unsupported operator: ${operator}`);
   }
 }
 
-function valueParser(value: any) {
+// Converts value to proper sql notation depending on its type
+function valueParser(value: number | string | boolean) {
   switch (typeof value) {
     case "string":
       return `'${value}'`;
     case "number":
       return value;
     case "boolean":
-      return value;
+      return value ? "true" : "false";
     default:
-      throw new Error(`Unsupported value: ${value}`);
+      throw new Error(`Unsupported value: ${value} of type ${typeof value}`);
   }
 }
-
